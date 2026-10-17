@@ -32,6 +32,9 @@ describe("validateConfig", () => {
     expect(() => validateConfig({} as never)).toThrow("floors");
     expect(() => validateConfig({ floors: [{ name: "P", rooms: [{ temperature: "sensor.t" }] }] } as never)).toThrow("name");
     expect(() => validateConfig({ floors: [{ name: "P", rooms: [{ name: "Salón" }] }] } as never)).toThrow("temperature");
+    expect(() => validateConfig({ ...CARD_CONFIG, hours: 0 })).toThrow("hours");
+    expect(() => validateConfig({ ...CARD_CONFIG, hours: "24" } as never)).toThrow("hours");
+    expect(() => validateConfig({ ...CARD_CONFIG, comfort: { cold: 26 } })).toThrow("comfort");
     expect(validateConfig(CARD_CONFIG)).toBe(CARD_CONFIG);
   });
 });
@@ -92,11 +95,36 @@ describe("render", () => {
   });
 });
 
+describe("actualizaciones", () => {
+  it("solo vuelve a pintar si cambia alguna de sus entidades", async () => {
+    const { card } = await mount();
+    const states = (card.hass as { states: Record<string, unknown> }).states;
+    const renders = () => (card as unknown as { _renders: number })._renders;
+    const before = renders();
+    card.hass = { ...(card.hass as object), states: { ...states, "light.cocina": st("on") } };
+    await card.updateComplete;
+    expect(renders()).toBe(before);
+    card.hass = { ...(card.hass as object), states: { ...states, [SALON.temperature]: st("25.1") } };
+    await card.updateComplete;
+    expect(renders()).toBe(before + 1);
+  });
+});
+
 describe("only_alerts", () => {
-  it("sin avisos no pinta nada ni pide historia", async () => {
-    const { $, ws } = await mount({}, { ...CARD_CONFIG, only_alerts: true });
+  it("sin avisos no pinta nada, se oculta, no ocupa sitio y no pide historia", async () => {
+    const { card, $, ws } = await mount({}, { ...CARD_CONFIG, only_alerts: true });
     expect($("ha-card")).toBeNull();
+    expect(card.hidden).toBe(true);
+    expect((card as unknown as { getCardSize(): number }).getCardSize()).toBe(0);
     expect(ws).toHaveLength(0);
+  });
+
+  it("cuando aparece un aviso se vuelve a ver", async () => {
+    const { card, $ } = await mount({}, { ...CARD_CONFIG, only_alerts: true });
+    card.hass = makeHass({ [SALON.battery!]: st("5") }).hass;
+    await card.updateComplete;
+    expect(card.hidden).toBe(false);
+    expect($(".room")).not.toBeNull();
   });
 
   it("solo las estancias con aviso, sin cabecera ni plantas vacías", async () => {

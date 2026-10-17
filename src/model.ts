@@ -13,6 +13,8 @@ const TREND_STEP = 0.3;
 const SPARK_W = 100;
 const SPARK_H = 24;
 const SPARK_PAD = 2;
+/** Alto mínimo de la curva en grados: si varía menos, se centra y el ruido del sensor no parece un salto. */
+const SPARK_MIN_SPAN = 1;
 
 export function num(hass: HomeAssistant, entity?: string): number | null {
   if (!entity) return null;
@@ -84,13 +86,12 @@ export function sparkline(points: Point[], now: number, hours: number): string |
   const pts = [...points];
   if (pts[pts.length - 1].t < now) pts.push({ t: now, v: pts[pts.length - 1].v });
   const values = pts.map((p) => p.v);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min;
+  const span = Math.max(Math.max(...values) - Math.min(...values), SPARK_MIN_SPAN);
+  const top = (Math.max(...values) + Math.min(...values)) / 2 + span / 2;
   return pts
     .map((p) => {
       const x = Math.max(0, ((p.t - start) / (hours * HOUR)) * SPARK_W);
-      const y = span === 0 ? SPARK_H / 2 : SPARK_PAD + ((max - p.v) / span) * (SPARK_H - 2 * SPARK_PAD);
+      const y = SPARK_PAD + ((top - p.v) / span) * (SPARK_H - 2 * SPARK_PAD);
       return `${round1(x)},${round1(y)}`;
     })
     .join(" ");
@@ -119,7 +120,9 @@ export function buildRoomView(
   const temperature = num(hass, room.temperature);
   const humidity = num(hass, room.humidity);
   const battery = num(hass, room.battery);
-  const points = history[room.temperature] ?? [];
+  // La historia puede tener hasta 10 min: la curva termina en el valor actual, igual que el número y la flecha.
+  const points = [...(history[room.temperature] ?? [])];
+  if (points.length && temperature !== null && points[points.length - 1].t < now) points.push({ t: now, v: temperature });
   return {
     name: room.name,
     entity: room.temperature,

@@ -11,6 +11,7 @@ export const styles = css`
     --hc-hot: 239, 68, 68;
     --hc-unknown: 155, 155, 155;
   }
+  :host([hidden]) { display: none; }
   ha-card { overflow: hidden; padding-bottom: 12px; }
   ha-icon { --mdc-icon-size: 18px; }
   .top { padding: 12px 14px; border-bottom: 1px solid var(--hc-line); display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }

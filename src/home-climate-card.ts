@@ -1,4 +1,4 @@
-import { LitElement, html, nothing, svg, type TemplateResult } from "lit";
+import { LitElement, html, nothing, svg, type PropertyValues, type TemplateResult } from "lit";
 import type { HomeAssistant } from "custom-card-helpers";
 import type { CardConfig, FloorConfig, Point, RoomView } from "./types";
 import {
@@ -23,7 +23,20 @@ export function validateConfig(config: Partial<CardConfig> | undefined): CardCon
       if (!r.temperature) throw new Error(`floors[${i}].rooms[${j}].temperature es obligatorio`);
     });
   });
+  if (config!.hours !== undefined && !(typeof config!.hours === "number" && config!.hours > 0)) {
+    throw new Error("hours: tiene que ser un número de horas mayor que 0");
+  }
+  const c = { ...DEFAULT_COMFORT, ...config!.comfort };
+  if (!(c.cold < c.warm && c.warm < c.hot)) throw new Error("comfort: tiene que cumplirse cold < warm < hot");
   return config as CardConfig;
+}
+
+/** Entidades que pinta la tarjeta: solo si cambia alguna merece la pena volver a pintar. */
+function watchedEntities(cfg: CardConfig): string[] {
+  const out = cfg.floors.flatMap((f) => f.rooms.flatMap((r) => [r.temperature, r.humidity, r.battery]));
+  if (cfg.outdoor) out.push(cfg.outdoor.temperature, cfg.outdoor.humidity, cfg.outdoor.forecast, cfg.outdoor.feels_like);
+  out.push(...(cfg.summary ?? []).map((c) => c.entity));
+  return out.filter((e): e is string => !!e);
 }
 
 const TREND_ICON = { up: "mdi:arrow-up", down: "mdi:arrow-down", flat: "mdi:arrow-right" } as const;
@@ -43,6 +56,11 @@ export class HomeClimateCard extends LitElement {
   declare private _history: Record<string, Point[]>;
   private _fetchedAt = 0;
   private _fetching = false;
+  private _watched: string[] = [];
+  /** Veces que se ha pintado (para los tests). */
+  private _renders = 0;
+  /** Con `only_alerts` y ningún aviso no hay nada que enseñar. */
+  private _empty = false;
 
   constructor() {
     super();
@@ -51,15 +69,26 @@ export class HomeClimateCard extends LitElement {
 
   setConfig(config: CardConfig): void {
     this._config = validateConfig(config);
+    this._watched = watchedEntities(this._config);
     this._fetchedAt = 0;
   }
 
   getCardSize(): number {
     if (!this._config) return 1;
+    if (this._empty) return 0;
     return 2 + this._config.floors.reduce((n, f) => n + Math.ceil(f.rooms.length / 3) * 2, 0);
   }
 
+  /** HA cambia `hass` con cualquier estado de la casa: solo se repinta si cambia alguna entidad de la tarjeta. */
+  protected shouldUpdate(changed: PropertyValues): boolean {
+    if (changed.size !== 1 || !changed.has("hass")) return true;
+    const old = changed.get("hass") as HomeAssistant | undefined;
+    if (!old || !this.hass) return true;
+    return this._watched.some((e) => old.states[e] !== this.hass!.states[e]);
+  }
+
   protected updated(): void {
+    this.hidden = this._empty;
     if (this.hass && this._config && !this._config.only_alerts && !this._fetching && Date.now() - this._fetchedAt > HISTORY_REFRESH) {
       void this._fetchHistory();
     }
@@ -103,12 +132,14 @@ export class HomeClimateCard extends LitElement {
 
   render() {
     if (!this._config || !this.hass) return nothing;
+    this._renders++;
     const cfg = this._config;
     const floors = cfg.floors
       .map((f) => ({ floor: f, rooms: this._views(f) }))
       .map((x) => (cfg.only_alerts ? { ...x, rooms: x.rooms.filter((r) => r.alerts.length) } : x))
       .filter((x) => x.rooms.length);
-    if (cfg.only_alerts && !floors.length) return nothing;
+    this._empty = !!cfg.only_alerts && !floors.length;
+    if (this._empty) return nothing;
     return html`
       <ha-card>
         ${cfg.only_alerts ? nothing : this._renderHeader()}

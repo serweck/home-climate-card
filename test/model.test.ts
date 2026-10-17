@@ -67,6 +67,9 @@ describe("sparkline", () => {
     const pts = [{ t: NOW - 24 * H, v: 20 }, { t: NOW - 12 * H, v: 22 }, { t: NOW, v: 21 }];
     expect(sparkline(pts, NOW, 24)).toBe("0,22 50,2 100,12");
   });
+  it("cambios de menos de 1 °C no llenan todo el alto (el ruido no parece un salto)", () => {
+    expect(sparkline([{ t: NOW - 24 * H, v: 21 }, { t: NOW, v: 21.2 }], NOW, 24)).toBe("0,14 100,10");
+  });
   it("una línea plana va por el medio y alarga el último valor hasta ahora", () => {
     expect(sparkline([{ t: NOW - 6 * H, v: 21 }], NOW, 24)).toBe("75,12 100,12");
   });
@@ -113,8 +116,31 @@ describe("buildRoomView", () => {
     expect(v.trend).toBe("up");
     expect(v.spark).not.toBeNull();
   });
+  it("la curva acaba en el valor actual aunque la historia sea de hace unos minutos", () => {
+    const { hass } = makeHass({ [SALON.temperature]: st("25") });
+    const v = buildRoomView(hass, SALON, { [SALON.temperature]: [{ t: NOW - 24 * H, v: 24 }, { t: NOW - 600_000, v: 24 }] }, NOW);
+    expect(v.spark?.split(" ").pop()).toBe("100,2");
+    expect(v.trend).toBe("up");
+  });
   it("exterior con calor y humedad altas: sin avisos", () => {
     const { hass } = makeHass({ [PISCINA.temperature]: st("36"), [PISCINA.humidity!]: st("85") });
     expect(buildRoomView(hass, PISCINA, {}, NOW).alerts).toEqual([]);
+  });
+});
+
+describe("historia real de HA", () => {
+  it("la respuesta capturada el 17-oct se lee entera y su curva va de principio a fin", async () => {
+    const real = (await import("./history-real.json")).default;
+    const parsed = parseHistory(real.response);
+    const start = Date.parse(real.start_time);
+    const end = Date.parse(real.end_time);
+    for (const [entity, list] of Object.entries(real.response as Record<string, unknown[]>)) {
+      const pts = parsed[entity];
+      expect(pts).toHaveLength(list.length);
+      expect(pts[0].t).toBeGreaterThanOrEqual(start - 1000);
+      const spark = sparkline(pts, end, 3)!.split(" ");
+      expect(Number(spark[0].split(",")[0])).toBeLessThan(1);
+      expect(spark[spark.length - 1].startsWith("100,")).toBe(true);
+    }
   });
 });
