@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>home-climate-card · vista previa</title>
+<style>
+  body { background:#111; color:#e1e1e1; font-family:Roboto, "Segoe UI", sans-serif; padding:24px; margin:0;
+         --primary-text-color:#e1e1e1; --secondary-text-color:#9b9b9b; --card-background-color:#1c1c1c;
+         --ha-card-background:#1c1c1c; --secondary-background-color:#262626; --divider-color:#2c2c2c; }
+  ha-card { display:block; background:var(--ha-card-background); border:1px solid #2c2c2c; border-radius:16px; }
+  .wrap { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
+  .col { width:620px; } .col.narrow { width:380px; } h3 { font-weight:500; color:#9b9b9b; font-size:13px; margin:0 0 8px; }
+  #log { font:12px monospace; color:#9b9b9b; white-space:pre; margin-top:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="col"><h3>Datos del 17-oct por la tarde (curvas inventadas)</h3><div id="a"></div></div>
+  <div class="col narrow"><h3>Portada: solo avisos (salón 29 °C, sótano 74 %, garaje sin pila)</h3><div id="b"></div>
+    <h3 style="margin-top:24px">Móvil</h3><div id="c"></div></div>
+</div>
+<div id="log">Detalles abiertos:</div>
+<script type="module">
+  // ha-icon mínimo para la vista previa (en HA lo pone el frontend), pintando en su shadow DOM como el de HA.
+  const MDI = "https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css";
+  customElements.define("ha-icon", class extends HTMLElement {
+    static get observedAttributes() { return ["icon"]; }
+    constructor() { super(); this.attachShadow({ mode: "open" }); }
+    connectedCallback() { this.render(); }
+    attributeChangedCallback() { this.render(); }
+    render() {
+      const icon = (this.getAttribute("icon") || "").replace("mdi:", "");
+      this.shadowRoot.innerHTML = `<link rel="stylesheet" href="${MDI}"><style>:host{display:inline-flex}</style>`
+        + `<i class="mdi mdi-${icon}" style="font-size:var(--mdc-icon-size,24px);line-height:1"></i>`;
+    }
+  });
+  customElements.define("ha-card", class extends HTMLElement {});
+  await import("./dist/home-climate-card.js");
+
+  const st = (state) => ({ state, attributes: {} });
+  const R = (n, room, name, t, h, extra = {}) => ({ n, room, name, t, h, ...extra });
+  const FLOORS = [
+    ["Planta baja", "mdi:home-floor-0", [R("09", "salon", "Salón", 24.6, 50), R("08", "comedor", "Comedor", 24.3, 49), R("06", "cocina", "Cocina", 24.9, 50),
+      R("05", "entrada", "Entrada", 24.7, 49), R("10", "despacho", "Despacho", 25.3, 47), R("07", "bano_planta_baja", "Baño", 24.1, 55)]],
+    ["Planta alta", "mdi:home-floor-1", [R("17", "habitacion_principal", "Hab. principal", 23.4, 52), R("16", "bano_principal", "Baño principal", 23.9, 58),
+      R("11", "habitacion_izquierda", "Hab. izquierda", 23.1, 51), R("12", "habitacion_derecha", "Hab. derecha", 23.6, 50),
+      R("13", "habitacion_centro", "Hab. centro", 23.8, 50), R("14", "pasillo", "Pasillo", 23.7, 49), R("15", "bano_invitados", "Baño invitados", 23.2, 56)]],
+    ["Sótano y garaje", "mdi:home-floor-negative-1", [R("04", "sotano", "Sótano", 23.3, 51), R("03", "garaje", "Garaje", 25.4, 48, { outdoor: true })]],
+    ["Exterior", "mdi:tree-outline", [R("01", "exterior_entrada", "Entrada", 22.4, 51, { outdoor: true }), R("02", "exterior_piscina", "Piscina", 22.4, 51, { outdoor: true }),
+      R("18", "balcon", "Balcón", 21.8, 53, { outdoor: true })]],
+  ];
+  const id = (r, k) => `sensor.temperature_sensor_${r.n}_${r.room}_${k}`;
+  const config = (extra = {}) => ({
+    title: "Temperaturas",
+    outdoor: { temperature: "sensor.temperatura_exterior_termometros", humidity: "sensor.aemet_humidity",
+               forecast: "sensor.aemet_temperature", feels_like: "sensor.aemet_temperature_feeling" },
+    summary: [{ name: "Casa", entity: "sensor.temperatura_termostato" }, { name: "P. baja", entity: "sensor.temperatura_planta_baja" },
+              { name: "P. alta", entity: "sensor.temperatura_planta_superior" }],
+    floors: FLOORS.map(([name, icon, rooms]) => ({ name, icon, rooms: rooms.map((r) => ({
+      name: r.name, temperature: id(r, "temperature"), humidity: id(r, "humidity"), battery: id(r, "battery"), ...(r.outdoor ? { outdoor: true } : {}) })) })),
+    ...extra,
+  });
+  const states = (over = {}) => {
+    const s = { "sensor.temperatura_exterior_termometros": st("22.4"), "sensor.aemet_humidity": st("52"), "sensor.aemet_temperature": st("22.2"),
+      "sensor.aemet_temperature_feeling": st("23"), "sensor.temperatura_termostato": st("24.05"), "sensor.temperatura_planta_baja": st("24.5"),
+      "sensor.temperatura_planta_superior": st("23.6") };
+    for (const [, , rooms] of FLOORS) for (const r of rooms) {
+      s[id(r, "temperature")] = st(String(r.t)); s[id(r, "humidity")] = st(String(r.h)); s[id(r, "battery")] = st("100");
+    }
+    return { ...s, ...over };
+  };
+  // Curvas de 24 h inventadas: más calor por la tarde, más amplitud fuera.
+  const now = Date.now() / 1000;
+  const history = {};
+  for (const [, , rooms] of FLOORS) for (const r of rooms) {
+    const amp = r.outdoor ? 6 : 1.2;
+    history[id(r, "temperature")] = Array.from({ length: 49 }, (_, i) => {
+      const t = now - (48 - i) * 1800;
+      const hour = new Date(t * 1000).getHours() + new Date(t * 1000).getMinutes() / 60;
+      return { s: (r.t - amp + amp * (1 + Math.sin(((hour - 9) / 24) * 2 * Math.PI)) * 0.9 + Math.sin(i) * 0.08).toFixed(2), lu: t };
+    });
+  }
+  const log = document.getElementById("log");
+  const mount = (el, cfg, over) => {
+    const card = document.createElement("home-climate-card");
+    card.setConfig(cfg);
+    card.hass = { states: states(over), callWS: async () => history };
+    card.addEventListener("hass-more-info", (e) => { log.textContent += `\n${e.detail.entityId}`; });
+    document.getElementById(el).appendChild(card);
+  };
+  const alerts = { [id(FLOORS[0][2][0], "temperature")]: st("29.1"), [id(FLOORS[2][2][0], "humidity")]: st("74"),
+                   [id(FLOORS[2][2][1], "battery")]: st("8") };
+  mount("a", config());
+  mount("b", config({ only_alerts: true }), alerts);
+  mount("c", config(), alerts);
+</script>
+</body>
+</html>
